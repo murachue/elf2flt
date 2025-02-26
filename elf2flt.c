@@ -83,6 +83,26 @@ const char *elf2flt_progname;
 #include <elf/xtensa.h>
 #elif defined(TARGET_riscv64) || defined(TARGET_riscv32)
 #include <elf/riscv.h>
+#elif defined(TARGET_mips)
+// ps1linux:include/asm-mipsnommu/flat.h, zero columns padded
+// where the relocation target field in?
+#define FLAT_RELOC_IN_TEXT       0x00000000
+#define FLAT_RELOC_IN_DATA       0x40000000
+#define FLAT_RELOC_IN_BSS        0x80000000
+// where relocation value(symbol) is relative from?
+#define FLAT_RELOC_REL_TEXT      0x00000000
+#define FLAT_RELOC_REL_DATA      0x10000000
+#define FLAT_RELOC_REL_BSS       0x20000000
+// e.g. a text referencing to a data: F_R_IN_TEXT | F_R_REL_DATA
+// relocation type
+#define FLAT_RELOC_TYPE_32       0x00000000
+#define FLAT_RELOC_TYPE_HI16     0x01000000
+#define FLAT_RELOC_TYPE_LO16     0x02000000
+#define FLAT_RELOC_TYPE_26       0x03000000
+// relocation direction
+//#define FLAT_RELOC_SIGN_POS      0x00000000 // target+=rel_off
+//#define FLAT_RELOC_SIGN_NEG      0x00800000 // target-=rel_off
+#include <elf/mips.h>
 #endif
 
 #if defined(__MINGW32__)
@@ -129,6 +149,8 @@ const char *elf2flt_progname;
 #define ARCH	"riscv64"
 #elif defined(TARGET_riscv32)
 #define ARCH	"riscv32"
+#elif defined(TARGET_mips)
+#define ARCH	"mips"
 #else
 #error "Don't know how to support your CPU architecture??"
 #endif
@@ -540,13 +562,46 @@ output_relocs (
 			 */
 			addstr[0] = 0;
 #if !defined TARGET_e1 && !defined TARGET_bfin
-  			if ((sym_addr = get_symbol_offset((char *) sym_name,
+			if ((sym_addr = get_symbol_offset((char *) sym_name,
 			    sym_section, symbols, number_of_symbols)) == -1) {
 				sym_addr = 0;
 			}
 #else
 			sym_addr = (*(q->sym_ptr_ptr))->value;
 #endif
+
+#ifdef TARGET_mips
+			// pre-set pflags here
+			{
+				// note: *q->sym_ptr_ptr is validated to non-NULL.
+				struct bfd_symbol *qs = *q->sym_ptr_ptr; // relocation target symbol
+
+				if (a->flags & SEC_CODE)
+					pflags = FLAT_RELOC_IN_TEXT;
+				else if ((a->flags & SEC_DATA) && (a->flags & SEC_HAS_CONTENTS))
+					pflags = FLAT_RELOC_IN_DATA;
+				else if ((a->flags & SEC_DATA) && !(a->flags & SEC_HAS_CONTENTS))
+					pflags = FLAT_RELOC_IN_BSS; // really exists?
+				else {
+					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation entry in the unexpected section\n", r->name, q->address, qs->name);
+					bad_relocs++;
+					continue;
+				}
+				// sym_ptr->section is always non-NULL. (bfd.h)
+				if (qs->section->flags & SEC_CODE)
+					pflags |= FLAT_RELOC_REL_TEXT;
+				else if ((qs->section->flags & SEC_DATA) && (qs->section->flags & SEC_HAS_CONTENTS))
+					pflags = FLAT_RELOC_REL_DATA;
+				else if ((qs->section->flags & SEC_DATA) && !(qs->section->flags & SEC_HAS_CONTENTS))
+					pflags = FLAT_RELOC_REL_BSS;
+				else {
+					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation target in the unexpected section\n", r->name, q->address, qs->name);
+					bad_relocs++;
+					continue;
+				}
+			}
+#endif
+
 			if (use_resolved) {
 				/* Use the address of the symbol already in
 				   the program text.  How this is handled may
@@ -848,6 +903,37 @@ output_relocs (
 					goto good_32bit_resolved_reloc;
 				default:
 					goto bad_resolved_reloc;
+#elif defined(TARGET_mips)
+				case R_MIPS_16:
+					// I don't see it in the wild yet, and maybe runtime relocation required.
+					// error it at this time. sorry!
+					goto bad_resolved_reloc;
+				case R_MIPS_REL32:
+				case R_MIPS_GPREL16:
+				case R_MIPS_LITERAL:
+				case R_MIPS_GOT16:
+				case R_MIPS_PC16:
+				case R_MIPS_CALL16:
+				case R_MIPS_GPREL32:
+				case R_MIPS_GOT_HI16:
+				case R_MIPS_GOT_LO16:
+				case R_MIPS_CALL_HI16:
+				case R_MIPS_CALL_LO16:
+					// already completely resolved in absolute text, no need to runtime relocation.
+					continue;
+				case R_MIPS_LO16:
+					// HI16+LO16 should be relocated, but
+					// lw(GOT16)+LO16 should NOT be relocated. (already completely resolved.)
+					if (p != relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
+						continue;
+					// else, FALLTHROUGH
+				case R_MIPS_26:
+				case R_MIPS_HI16:
+					// above are 32bits in thinking with a instruction. pflags is already set. FALLTHROUGH
+				case R_MIPS_32:
+					goto good_32bit_resolved_reloc;
+				default:
+					goto bad_resolved_reloc;
 #else
 				default:
 					/* The default is to assume that the
@@ -916,6 +1002,22 @@ output_relocs (
 					rc = -1;
 					continue;
 				}
+#endif
+
+#ifdef TARGET_MIPS
+				// preload cur_word as current word. in MIPS, addend is encoded in binary (not reloc), this make life easier.
+				if (bfd_big_endian (abs_bfd))
+					cur_word =
+						(r_mem[0] << 24)
+						+ (r_mem[1] << 16)
+						+ (r_mem[2] << 8)
+						+ r_mem[3];
+				else
+					cur_word =
+						r_mem[0]
+						+ (r_mem[1] << 8)
+						+ (r_mem[2] << 16)
+						+ (r_mem[3] << 24);
 #endif
 
 				switch ((*p)->howto->type) {
@@ -1480,6 +1582,47 @@ DIS29_RELOCATION:
 #undef _30BITS_RELOC
 #undef _28BITS_RELOC
 #endif
+
+#ifdef TARGET_mips
+				case R_MIPS_26:
+					relocation_needed = 1;
+					pflags |= FLAT_RELOC_TYPE_26;
+					sym_vma = elf2flt_bfd_section_vma(sym_section);
+					sym_addr = (sym_addr & 0xfc000000) | ((sym_addr + (sym_vma >> 2)) & 0x03ffFFFF);
+					break;
+				// TODO: special treat HI/LO pair... how GOT16+LO16?
+				//case R_MIPS_HI16:
+				//	relocation_needed = 1;
+				//	pflags |= FLAT_RELOC_TYPE_HI16;
+				//	//
+				//	//sym_vma = elf2flt_bfd_section_vma(sym_section);
+				//	//sym_addr += sym_vma + q->addend;
+				//	break;
+				//case R_MIPS_LO16:
+				//	break;
+				case R_MIPS_32:
+					relocation_needed = 1;
+					pflags |= FLAT_RELOC_TYPE_32;
+					sym_vma = elf2flt_bfd_section_vma(sym_section);
+					// use sym_addr as is.
+					break;
+
+				// unsupported (yet) in this elf2flt, and in bFLT2/4 for some reloc types maybe.
+				// use use_resolved at this time...
+				//case R_MIPS_16:
+				//case R_MIPS_REL32:
+				//case R_MIPS_GPREL16:
+				//case R_MIPS_LITERAL:
+				//case R_MIPS_GOT16:
+				//case R_MIPS_PC16:
+				//case R_MIPS_CALL16:
+				//case R_MIPS_GPREL32:
+				//case R_MIPS_GOT_HI16:
+				//case R_MIPS_GOT_LO16:
+				//case R_MIPS_CALL_HI16:
+				//case R_MIPS_CALL_LO16:
+#endif
+
 				default:
 					/* missing support for other types of relocs */
 					printf("ERROR: bad reloc type (%s)%d\n", q->howto->name, (*p)->howto->type);
@@ -1488,8 +1631,9 @@ DIS29_RELOCATION:
 				}
 			}
 
-			sprintf(&addstr[0], "+0x%lx", sym_addr - (*(q->sym_ptr_ptr))->value -
-					 elf2flt_bfd_section_vma(sym_section));
+			// XXX: address size is bfd-dependent, but we assume it's 32bit, as FLAT (reloc) only supports 32bit.
+			sprintf(&addstr[0], "+0x%"PRIx32, sym_addr - (uint32_t)(*(q->sym_ptr_ptr))->value -
+					 (uint32_t)elf2flt_bfd_section_vma(sym_section));
 
 
 			/*

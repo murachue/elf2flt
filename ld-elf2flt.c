@@ -36,6 +36,7 @@ static const char *output_file = "a.out";
 static const char *linker_script = NULL;
 static const char *emulation = NULL;
 static const char *tmp_file = NULL;
+static const char *tmpnm_file = NULL;
 static const char *output_gdb = NULL;
 static const char *output_elf = NULL;
 static const char *output_flt = NULL;
@@ -397,8 +398,8 @@ static int do_final_link(int revision)
 	if (shared_lib_id && strtol(shared_lib_id, NULL, 0) != 0)
 		exec_or_ret(objcopy, NULL, NULL, "--localize-hidden", "--weaken", output_gdb);
 
-	exec_or_ret(nm, tmp_file, NULL, "-p", output_gdb);
-	in = xfopen(tmp_file, "r");
+	exec_or_ret(nm, tmpnm_file, NULL, "-p", output_gdb);
+	in = xfopen(tmpnm_file, "r");
 	while ((len = getline(&line, &alloc, in)) > 0) {
 		const char *ptr = strchr(line, '_');
 		if (ptr && streqn(ptr, "_GLOBAL_OFFSET_TABLE")) {
@@ -583,9 +584,11 @@ int main(int argc, char *argv[])
 	/* Otherwise link & convert to flt.  */
 	output_gdb = concat(output_file, ".gdb", NULL);
 	tmp_file = make_temp_file(NULL);
+	tmpnm_file = make_temp_file(NULL);
 	status = do_final_link(have_elf2flt_options);
 	if (!flag_verbose) {
 		unlink(tmp_file);
+		unlink(tmpnm_file);
 		unlink(output_flt);
 		if (output_elf) {
 			unlink(output_elf);
@@ -594,9 +597,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr,
 			"leaving elf2flt temp files behind:\n"
 			"tmp_file   = %s\n"
+			"tmpnm_file = %s\n"
 			"output_flt = %s\n"
 			"output_elf = %s\n",
-			tmp_file, output_flt, strNULL(output_elf));
+			tmp_file, tmpnm_file, output_flt, strNULL(output_elf));
 	}
 	return status;
 }

@@ -102,6 +102,7 @@ const char *elf2flt_progname;
 // relocation direction
 //#define FLAT_RELOC_SIGN_POS      0x00000000 // target+=rel_off
 //#define FLAT_RELOC_SIGN_NEG      0x00800000 // target-=rel_off
+#define FLAT_RELOC_OFFSET_MASK   0x7fffff
 #include <elf/mips.h>
 #endif
 
@@ -112,6 +113,32 @@ const char *elf2flt_progname;
 /* from uClinux-x.x.x/include/linux */
 #include "flat.h"     /* Binary flat header description                      */
 #include "compress.h"
+
+// from ps1linux:include/asm-mipsnommu/flat.h, unsigned_long to uint32_t
+// bFLT4's text_start disappearing makes header INCOMPATIBLE!
+// they are NATIVE ENDIAN except flags, in contrast to bFLT4's network endian.
+struct flat2_hdr {
+	char magic[4];
+	unsigned long rev;
+	unsigned long entry_point; /* Offset of program start point from beginning of text segment */
+	unsigned long text_start; /* Offset of first executable instruction with text segment from beginning of file*/
+	unsigned long data_start; /* Offset of data segment from beginning of file*/
+
+	unsigned long data_end; /* Offset of end of data segment from beginning of file*/
+	unsigned long bss_end; /* Offset of end of bss segment from beginning of file*/
+				/* (It is assumed that data_end through bss_end forms the
+				    bss segment.) */
+	unsigned long stack_size; /* Size of stack, in bytes */
+	unsigned long reloc_start; /* Offset of relocation records from beginning of file */
+
+	unsigned long reloc_count; /* Number of relocation records */
+
+	unsigned long flags;
+
+	unsigned long filler[5]; /* Reservered, set to zero */
+};
+#define	OLD_FLAT_VERSION		0x00000002L
+
 
 #ifdef TARGET_e1
 #include <e1.h>
@@ -578,9 +605,9 @@ output_relocs (
 
 				if (a->flags & SEC_CODE)
 					pflags = FLAT_RELOC_IN_TEXT;
-				else if ((a->flags & SEC_DATA) && (a->flags & SEC_HAS_CONTENTS))
+				else if (a->flags & SEC_DATA)
 					pflags = FLAT_RELOC_IN_DATA;
-				else if ((a->flags & SEC_DATA) && !(a->flags & SEC_HAS_CONTENTS))
+				else if ((a->flags & SEC_ALLOC) && !(a->flags & SEC_CODE) && !(a->flags & SEC_DATA) && !(a->flags & SEC_HAS_CONTENTS))
 					pflags = FLAT_RELOC_IN_BSS; // really exists?
 				else {
 					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation entry in the unexpected section\n", r->name, q->address, qs->name);
@@ -590,9 +617,9 @@ output_relocs (
 				// sym_ptr->section is always non-NULL. (bfd.h)
 				if (qs->section->flags & SEC_CODE)
 					pflags |= FLAT_RELOC_REL_TEXT;
-				else if ((qs->section->flags & SEC_DATA) && (qs->section->flags & SEC_HAS_CONTENTS))
+				else if (qs->section->flags & SEC_DATA)
 					pflags = FLAT_RELOC_REL_DATA;
-				else if ((qs->section->flags & SEC_DATA) && !(qs->section->flags & SEC_HAS_CONTENTS))
+				else if ((qs->section->flags & SEC_ALLOC) && !(qs->section->flags & SEC_CODE) && !(qs->section->flags & SEC_DATA) && !(qs->section->flags & SEC_HAS_CONTENTS))
 					pflags = FLAT_RELOC_REL_BSS;
 				else {
 					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation target in the unexpected section\n", r->name, q->address, qs->name);
@@ -1860,6 +1887,7 @@ static void usage(int status)
 		"       -a              : use existing symbol references\n"
 		"                         instead of recalculating from\n"
 		"                         relocation info\n"
+		"       -2              : generate old revision 2 bFLT format\n"
 		"       -R reloc-file   : read relocations from a separate file\n"
 		"       -p abs-pic-file : GOT/PIC processing with files\n"
 		"       -s stacksize    : set application stack size\n"
@@ -1923,6 +1951,7 @@ int main(int argc, char *argv[])
   int opt;
   int i;
   int stack;
+  int revision = 4;
   stream gf;
 
   asymbol **symbol_table;
@@ -1943,7 +1972,8 @@ int main(int argc, char *argv[])
   void *data;
   uint32_t *reloc;
 
-  struct flat_hdr hdr;
+  struct flat2_hdr hdr2;
+  struct flat_hdr hdr4;
 
   elf2flt_progname = argv[0];
   xmalloc_set_program_name(elf2flt_progname);
@@ -1951,11 +1981,16 @@ int main(int argc, char *argv[])
   if (argc < 2)
     usage(1);
 
-  if (sizeof(hdr) != 64)
+  if (sizeof(hdr2) != 64)
     fatal(
-	    "Potential flat header incompatibility detected\n"
+	    "Potential flat REV.2 header incompatibility detected\n"
 	    "header size should be 64 but is %d",
-	    sizeof(hdr));
+	    sizeof(hdr2));
+  if (sizeof(hdr4) != 64)
+    fatal(
+	    "Potential flat REV.4 header incompatibility detected\n"
+	    "header size should be 64 but is %d",
+	    sizeof(hdr4));
 
 #ifndef TARGET_e1
   stack = 4096;
@@ -1963,7 +1998,7 @@ int main(int argc, char *argv[])
   stack = 0x2020;
 #endif
 
-  while ((opt = getopt(argc, argv, "havzdrkp:s:o:R:")) != -1) {
+  while ((opt = getopt(argc, argv, "havzdrkp:s:o:R:2")) != -1) {
     switch (opt) {
     case 'v':
       verbose++;
@@ -1997,6 +2032,9 @@ int main(int argc, char *argv[])
       break;
     case 'R':
       rel_file = optarg;
+      break;
+    case '2':
+      revision = 2;
       break;
     case 'h':
       usage(0);
@@ -2157,25 +2195,44 @@ int main(int argc, char *argv[])
   text_offs = real_address_bits(text_vma);
 
   /* Fill in the binflt_flat header */
-  memcpy(hdr.magic,"bFLT",4);
-  hdr.rev         = htonl(FLAT_VERSION);
-  hdr.entry       = htonl(sizeof(hdr) + bfd_get_start_address(abs_bfd));
-  hdr.data_start  = htonl(sizeof(hdr) + text_offs + text_len);
-  hdr.data_end    = htonl(sizeof(hdr) + text_offs + text_len +data_len);
-  hdr.bss_end     = htonl(sizeof(hdr) + text_offs + text_len +data_len+bss_len);
-  hdr.stack_size  = htonl(stack); /* FIXME */
-  hdr.reloc_start = htonl(sizeof(hdr) + text_offs + text_len +data_len);
-  hdr.reloc_count = htonl(reloc_len);
-  hdr.flags       = htonl(0
+  if (revision == 4) {
+    memcpy(hdr4.magic,"bFLT",4);
+    hdr4.rev         = htonl(FLAT_VERSION);
+    hdr4.entry       = htonl(sizeof(hdr4) + bfd_get_start_address(abs_bfd));
+    hdr4.data_start  = htonl(sizeof(hdr4) + text_offs + text_len);
+    hdr4.data_end    = htonl(sizeof(hdr4) + text_offs + text_len +data_len);
+    hdr4.bss_end     = htonl(sizeof(hdr4) + text_offs + text_len +data_len+bss_len);
+    hdr4.stack_size  = htonl(stack); /* FIXME */
+    hdr4.reloc_start = htonl(sizeof(hdr4) + text_offs + text_len +data_len);
+    hdr4.reloc_count = htonl(reloc_len);
+    hdr4.flags       = htonl(0
 	  | (load_to_ram || text_has_relocs ? FLAT_FLAG_RAM : 0)
 	  | (ktrace ? FLAT_FLAG_KTRACE : 0)
 	  | (pic_with_got ? FLAT_FLAG_GOTPIC : 0)
 	  | (docompress ? (docompress == 2 ? FLAT_FLAG_GZDATA : FLAT_FLAG_GZIP) : 0)
 	  );
-  hdr.build_date = htonl((uint32_t)get_build_date());
-  memset(hdr.filler, 0x00, sizeof(hdr.filler));
+    hdr4.build_date = htonl((uint32_t)get_build_date());
+    memset(hdr4.filler, 0x00, sizeof(hdr4.filler));
+  } else {
+    // sorry, assuming host is little-endian.
+    memcpy(hdr2.magic,"bFLT",4);
+    hdr2.rev         =      (OLD_FLAT_VERSION);
+    hdr2.entry_point =      (sizeof(hdr2) + bfd_get_start_address(abs_bfd));
+    hdr2.text_start  =      (sizeof(hdr2) + text_offs);
+    hdr2.data_start  =      (sizeof(hdr2) + text_offs + text_len);
+    hdr2.data_end    =      (sizeof(hdr2) + text_offs + text_len +data_len);
+    hdr2.bss_end     =      (sizeof(hdr2) + text_offs + text_len +data_len+bss_len);
+    hdr2.stack_size  =      (stack); /* FIXME */
+    hdr2.reloc_start =      (sizeof(hdr2) + text_offs + text_len +data_len);
+    hdr2.reloc_count =      (reloc_len);
+    hdr2.flags       = htonl(0
+	  | (load_to_ram || text_has_relocs ? FLAT_FLAG_RAM : 0)
+	  );
+    memset(hdr2.filler, 0x00, sizeof(hdr2.filler));
+  }
 
-  for (i=0; i<reloc_len; i++) reloc[i] = htonl(reloc[i]);
+  if (revision == 4)
+    for (i=0; i<reloc_len; i++) reloc[i] = htonl(reloc[i]);
 
   if (verbose) {
     printf("SIZE: .text=0x%04x, .data=0x%04x, .bss=0x%04x",
@@ -2194,8 +2251,13 @@ int main(int argc, char *argv[])
   if ((fd = open (ofile, O_WRONLY|O_BINARY|O_CREAT|O_TRUNC, 0744)) < 0)
     fatal_perror("Can't open output file %s", ofile);
 
-  if (write(fd, &hdr, sizeof(hdr)) != sizeof(hdr))
-    fatal_perror("Couldn't write file %s", ofile);
+  if (revision == 4) {
+    if (write(fd, &hdr4, sizeof(hdr4)) != sizeof(hdr4))
+      fatal_perror("Couldn't write file %s", ofile);
+  } else {
+    if (write(fd, &hdr2, sizeof(hdr2)) != sizeof(hdr2))
+      fatal_perror("Couldn't write file %s", ofile);
+  }
   close(fd);
 
   if (fopen_stream_u(&gf, ofile, "a" BINARY_FILE_OPTS))

@@ -240,7 +240,7 @@ do_sed(const sed_commands_t *sed, const char *name_in, const char *name_out)
 		int status = execute(__VA_ARGS__); \
 		if (status) return status; \
 	} while (0)
-static int do_final_link(void)
+static int do_final_link(int revision)
 {
 	sed_commands_t sed;
 	struct stat buf;
@@ -355,6 +355,9 @@ static int do_final_link(void)
 	}
 	free_sed(&sed);
 
+	if (revision == 2)
+		append_option(&flt_options, "-2");
+
 	if (USE_EMIT_RELOCS) {
 
 		exec_or_ret(linker, NULL, &other_options,
@@ -425,10 +428,17 @@ static void parse_args(int argc, char **argv)
 		int to_all = argno;
 
 		if (streq(arg, "-elf2flt")) {
-			have_elf2flt_options = 1;
+			have_elf2flt_options = 4;
+			to_all++;
+		} else if (streq(arg, "-elf2flt2")) {
+			have_elf2flt_options = 2;
 			to_all++;
 		} else if (streqn(arg, "-elf2flt=")) {
-			have_elf2flt_options = 1;
+			have_elf2flt_options = 4;
+			append_option_str(&flt_options, &arg[9], "\t ");
+			to_all++;
+		} else if (streqn(arg, "-elf2flt2=")) {
+			have_elf2flt_options = 2;
 			append_option_str(&flt_options, &arg[9], "\t ");
 			to_all++;
 		} else if (streq(arg, "-move-rodata")) {
@@ -573,7 +583,7 @@ int main(int argc, char *argv[])
 	/* Otherwise link & convert to flt.  */
 	output_gdb = concat(output_file, ".gdb", NULL);
 	tmp_file = make_temp_file(NULL);
-	status = do_final_link();
+	status = do_final_link(have_elf2flt_options);
 	if (!flag_verbose) {
 		unlink(tmp_file);
 		unlink(output_flt);

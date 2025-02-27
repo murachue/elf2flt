@@ -55,7 +55,9 @@ struct flat_hdr {
     uint32_t filler[5];    /* Reservered, set to zero */
 };
 
+// available from revision 2
 #define FLAT_FLAG_RAM    0x0001 /* load program entirely into RAM */
+// following is only available from revision 4
 #define FLAT_FLAG_GOTPIC 0x0002 /* program is PIC with GOT */
 #define FLAT_FLAG_GZIP   0x0004 /* all but the header is compressed */
 #define FLAT_FLAG_GZDATA 0x0008 /* only data/relocs are compressed (for XIP) */

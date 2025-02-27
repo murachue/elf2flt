@@ -192,6 +192,13 @@ case $target in
 		;;
 esac
 
+ENTRY_SYMBOL=_start
+case $target in
+	mips*)
+		ENTRY_SYMBOL=__start
+		;;
+esac
+
 dnl Make sure we resolve system symbols before libiberty/libbfd ones.
 dnl Otherwise, things like getopt get screwed up because the system headers
 dnl redirect some functions to the system symbols, but other local symbols
@@ -269,6 +276,7 @@ AC_SUBST(emit_relocs)
 AC_SUBST(emit_ctor_dtor)
 AC_SUBST(always_reloc_text)
 AC_SUBST(SYMBOL_PREFIX)
+AC_SUBST(ENTRY_SYMBOL)
 AC_SUBST(HAVE_BFD_XTENSA_PDIFF_RELOCS)
 
 AC_OUTPUT(ld-elf2flt.sh:ld-elf2flt.in Makefile elf2flt.ld)

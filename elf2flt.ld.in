@@ -38,7 +38,7 @@
      By default, all SINGLE_LINK are kept.
  */
 
-ENTRY (@SYMBOL_PREFIX@_start)
+ENTRY (@ENTRY_SYMBOL@)
 
 MEMORY {
 	flatmem : ORIGIN = 0x0, LENGTH = 0xfffffff
@@ -222,7 +222,7 @@ TOR:		@SYMBOL_PREFIX@__DTOR_END__ = .;
 	} > flatmem
 
 	.junk 0 : { *(.rel*) *(.rela*) }
-	/DISCARD/ : { *(.note.GNU-stack) }
+	/DISCARD/ : { *(.note.GNU-stack) *(.reginfo) }
 	/* Stabs debugging sections.    */
 	.stab 0 : { *(.stab) }
 	.stabstr 0 : { *(.stabstr) }

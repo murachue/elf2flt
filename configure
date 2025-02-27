@@ -623,6 +623,7 @@ ac_subst_vars='LTLIBOBJS
 LIBOBJS
 HAVE_BFD_XTENSA_PDIFF_RELOCS
 SYMBOL_PREFIX
+ENTRY_SYMBOL
 always_reloc_text
 emit_ctor_dtor
 emit_relocs
@@ -4090,6 +4091,13 @@ SYMBOL_PREFIX=
 case $target in
 	bfin*)
 		SYMBOL_PREFIX=_
+		;;
+esac
+
+ENTRY_SYMBOL=_start
+case $target in
+	mips*)
+		ENTRY_SYMBOL=__start
 		;;
 esac
 

@@ -280,6 +280,7 @@ static int do_final_link(void)
 						if (!ptr)
 							break;
 						if (streqn(ptr, "RELOC")) {
+							// .rodata can contain relocs to .text/.rodata itself though?
 							flag_move_data = 0;
 							fprintf(stderr, "warning: .rodata section contains relocations");
 							break;
@@ -308,7 +309,7 @@ static int do_final_link(void)
 		append_sed(&sed, "ORIGIN = 0x0,", concat("ORIGIN = 0x", buf, "000000,", NULL));
 		append_sed(&sed, ".text 0x0 :", concat(".text 0x0", buf, "000000 :", NULL));
 		if (id)
-			append_sed(&sed, "ENTRY (" SYMBOL_PREFIX "_start)", "ENTRY (lib_main)");
+			append_sed(&sed, "ENTRY (" ENTRY_SYMBOL ")", "ENTRY (lib_main)");
 
 		/* Provide the symbol specifying the library's data segment
 		   pointer offset.  */

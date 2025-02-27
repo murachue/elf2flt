@@ -10,9 +10,10 @@ libdir = @libdir@
 includedir = @includedir@
 
 CC = @CC@
-CPU = @target_cpu@
+CPU = $(patsubst mipsel,mips,@target_cpu@)
 TARGET = @target_alias@
 SYMBOL_PREFIX = @SYMBOL_PREFIX@
+ENTRY_SYMBOL = @ENTRY_SYMBOL@
 CFLAGS = @CFLAGS@
 INCLUDES = -I$(srcdir) -Ibfd-headers @zlib_include_dir@
 BFD_INCLUDE_DIR = @bfd_include_dir@
@@ -25,6 +26,7 @@ DEFS = @DEFS@ \
 	-DTARGET_$(CPU) \
 	-DTARGET_CPU=\"$(CPU)\" \
 	-DSYMBOL_PREFIX=\"$(SYMBOL_PREFIX)\" \
+	-DENTRY_SYMBOL=\"$(ENTRY_SYMBOL)\" \
 	-DBINUTILS_LDSCRIPTDIR=\"@binutils_ldscript_dir@\" \
 	-DTARGET_ALIAS=\"$(TARGET)\" \
 	-DNO_GOT_CHECK=@got_check@ \

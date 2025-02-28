@@ -2217,7 +2217,8 @@ int main(int argc, char *argv[])
     // sorry, assuming host is little-endian.
     memcpy(hdr2.magic,"bFLT",4);
     hdr2.rev         =      (OLD_FLAT_VERSION);
-    hdr2.entry_point =      (sizeof(hdr2) + bfd_get_start_address(abs_bfd));
+    // in ps1linux bFLT2, entry is relative from text_start!
+    hdr2.entry_point =                      bfd_get_start_address(abs_bfd);
     hdr2.text_start  =      (sizeof(hdr2) + text_offs);
     hdr2.data_start  =      (sizeof(hdr2) + text_offs + text_len);
     hdr2.data_end    =      (sizeof(hdr2) + text_offs + text_len +data_len);
@@ -2227,10 +2228,11 @@ int main(int argc, char *argv[])
     hdr2.reloc_count =      (reloc_len);
     hdr2.flags       = htonl(0
 	  | (load_to_ram || text_has_relocs ? FLAT_FLAG_RAM : 0)
-	  );
+	  ); // only flags is big-endian. why?
     memset(hdr2.filler, 0x00, sizeof(hdr2.filler));
   }
 
+  // expecting host is little-endian for revision2.
   if (revision == 4)
     for (i=0; i<reloc_len; i++) reloc[i] = htonl(reloc[i]);
 

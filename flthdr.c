@@ -27,12 +27,16 @@ const char *elf2flt_progname;
 /* from uClinux-x.x.x/include/linux */
 #include "flat.h"     /* Binary flat header description                      */
 
+#include "flat2.h"
+
 #if defined(__MINGW32__)
 #include <getopt.h>
 #endif
 
 #if defined TARGET_bfin
 # define flat_get_relocate_addr(addr) (addr & 0x03ffffff)
+#elif defined TARGET_mips
+# define flat_get_relocate_addr(addr) (addr & FLAT_RELOC_OFFSET_MASK)
 #else
 # define flat_get_relocate_addr(addr) (addr)
 #endif
@@ -107,70 +111,153 @@ process_file(const char *ifile, const char *ofile)
 		time_t t;
 		uint32_t reloc_count, reloc_start;
 
-		printf("%s\n", ifile);
-		printf("    Magic:        %4.4s\n", old_hdr.magic);
-		printf("    Rev:          %d\n",    ntohl(old_hdr.rev));
-		t = (time_t) htonl(old_hdr.build_date);
-		printf("    Build Date:   %s",      t?ctime(&t):"not specified\n");
-		printf("    Entry:        0x%x\n",  ntohl(old_hdr.entry));
-		printf("    Data Start:   0x%x\n",  ntohl(old_hdr.data_start));
-		printf("    Data End:     0x%x\n",  ntohl(old_hdr.data_end));
-		printf("    BSS End:      0x%x\n",  ntohl(old_hdr.bss_end));
-		printf("    Stack Size:   0x%x\n",  ntohl(old_hdr.stack_size));
-		reloc_start = ntohl(old_hdr.reloc_start);
-		printf("    Reloc Start:  0x%x\n",  reloc_start);
-		reloc_count = ntohl(old_hdr.reloc_count);
-		printf("    Reloc Count:  0x%x\n",  reloc_count);
-		printf("    Flags:        0x%x ( ",  ntohl(old_hdr.flags));
-		if (old_flags) {
-			if (old_flags & FLAT_FLAG_RAM)
-				printf("Load-to-Ram ");
-			if (old_flags & FLAT_FLAG_GOTPIC)
-				printf("Has-PIC-GOT ");
-			if (old_flags & FLAT_FLAG_GZIP)
-				printf("Gzip-Compressed ");
-			if (old_flags & FLAT_FLAG_GZDATA)
-				printf("Gzip-Data-Compressed ");
-			if (old_flags & FLAT_FLAG_KTRACE)
-				printf("Kernel-Traced-Load ");
-			if (old_flags & FLAT_FLAG_L1STK)
-				printf("L1-Scratch-Stack ");
-		}
-		printf(")\n");
-
-		if (print_relocs) {
-			uint32_t *relocs = xcalloc(reloc_count, sizeof(uint32_t));
-			uint32_t i;
-			unsigned long r;
-
-			printf("    Relocs:\n");
-			printf("    #\treloc      (  address )\tdata\n");
-
-			if (old_flags & FLAT_FLAG_GZIP)
-				reopen_stream_compressed(&ifp);
-			if (fseek_stream(&ifp, reloc_start, SEEK_SET)) {
-				fprintf(stderr, "Cannot seek to relocs of %s\n", ifile);
-				fclose_stream(&ifp);
-				return;
+		if (old_hdr.rev <= 2) {
+			struct flat2_hdr hdr2;
+			memcpy(&hdr2, &old_hdr, sizeof(hdr2));
+			// expecting host is little-endian.
+			printf("%s\n", ifile);
+			printf("    Magic:        %4.4s\n", hdr2.magic);
+			printf("    Rev:          %d\n",    hdr2.rev);
+			printf("    Entry:        0x%x\n",  hdr2.entry_point); // note that offset from text_start.
+			printf("    Text Start:   0x%x\n",  hdr2.text_start);
+			printf("    Data Start:   0x%x\n",  hdr2.data_start);
+			printf("    Data End:     0x%x\n",  hdr2.data_end);
+			printf("    BSS End:      0x%x\n",  hdr2.bss_end);
+			printf("    Stack Size:   0x%x\n",  hdr2.stack_size);
+			reloc_start = hdr2.reloc_start;
+			printf("    Reloc Start:  0x%x\n",  reloc_start);
+			reloc_count = hdr2.reloc_count;
+			printf("    Reloc Count:  0x%x\n",  reloc_count);
+			printf("    Flags:        0x%x ( ",  ntohl(hdr2.flags));
+			if (hdr2.flags) {
+				if (hdr2.flags & FLAT_FLAG_RAM)
+					printf("Load-to-Ram ");
 			}
-			if (fread_stream(relocs, sizeof(uint32_t), reloc_count, &ifp) == -1) {
-				fprintf(stderr, "Cannot read relocs of %s\n", ifile);
-				fclose_stream(&ifp);
-				return;
-			}
+			printf(")\n");
 
-			for (i = 0; i < reloc_count; ++i) {
-				uint32_t raddr, addr;
-				r = ntohl(relocs[i]);
-				raddr = flat_get_relocate_addr(r);
-				printf("    %u\t0x%08lx (0x%08"PRIx32")\t", i, r, raddr);
-				fseek_stream(&ifp, sizeof(old_hdr) + raddr, SEEK_SET);
-				fread_stream(&addr, sizeof(addr), 1, &ifp);
-				printf("%"PRIx32"\n", addr);
-			}
+			if (print_relocs) {
+				uint32_t *relocs = xcalloc(reloc_count, sizeof(uint32_t));
+				uint32_t i;
+				unsigned long r;
 
-			/* reset file position for below */
-			fseek_stream(&ifp, sizeof(old_hdr), SEEK_SET);
+				printf("    Relocs:\n");
+				printf("    #\treloc      (  address )\tdata\n");
+
+				if (fseek_stream(&ifp, reloc_start, SEEK_SET)) {
+					fprintf(stderr, "Cannot seek to relocs of %s\n", ifile);
+					fclose_stream(&ifp);
+					return;
+				}
+				if (fread_stream(relocs, sizeof(uint32_t), reloc_count, &ifp) == -1) {
+					fprintf(stderr, "Cannot read relocs of %s\n", ifile);
+					fclose_stream(&ifp);
+					return;
+				}
+
+				for (i = 0; i < reloc_count; ++i) {
+					uint32_t raddr, addr;
+					r = relocs[i];
+					raddr = flat_get_relocate_addr(r);
+#ifdef TARGET_mips
+					if ((r & FLAT_RELOC_IN_MASK) == FLAT_RELOC_IN_TEXT)
+						raddr += hdr2.text_start;
+					else if ((r & FLAT_RELOC_IN_MASK) == FLAT_RELOC_IN_DATA)
+						raddr += hdr2.data_start;
+					else if ((r & FLAT_RELOC_IN_MASK) == FLAT_RELOC_IN_BSS)
+						raddr += hdr2.data_end;
+#endif
+					printf("    %u\t0x%08lx (0x%08"PRIx32")\t", i, r, raddr);
+					fseek_stream(&ifp, raddr, SEEK_SET);
+					fread_stream(&addr, sizeof(addr), 1, &ifp);
+					printf("%"PRIx32, addr);
+#ifdef TARGET_mips
+					if ((r & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_TEXT)
+						printf(" (+text");
+					else if ((r & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_DATA)
+						printf(" (+data");
+					else if ((r & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_BSS)
+						printf(" (+bss");
+					if ((r & FLAT_RELOC_TYPE_MASK) == FLAT_RELOC_TYPE_32)
+						printf(":32)");
+					else if ((r & FLAT_RELOC_TYPE_MASK) == FLAT_RELOC_TYPE_HI16)
+						printf(":hi16)");
+					else if ((r & FLAT_RELOC_TYPE_MASK) == FLAT_RELOC_TYPE_LO16)
+						printf(":lo16)");
+					else if ((r & FLAT_RELOC_TYPE_MASK) == FLAT_RELOC_TYPE_26)
+						printf(":26)");
+#endif
+					printf("\n");
+				}
+
+				/* reset file position for below */
+				fseek_stream(&ifp, sizeof(old_hdr), SEEK_SET);
+			}
+		} else {
+			printf("%s\n", ifile);
+			printf("    Magic:        %4.4s\n", old_hdr.magic);
+			printf("    Rev:          %d\n",    ntohl(old_hdr.rev));
+			t = (time_t) htonl(old_hdr.build_date);
+			printf("    Build Date:   %s",      t?ctime(&t):"not specified\n");
+			printf("    Entry:        0x%x\n",  ntohl(old_hdr.entry));
+			printf("    Data Start:   0x%x\n",  ntohl(old_hdr.data_start));
+			printf("    Data End:     0x%x\n",  ntohl(old_hdr.data_end));
+			printf("    BSS End:      0x%x\n",  ntohl(old_hdr.bss_end));
+			printf("    Stack Size:   0x%x\n",  ntohl(old_hdr.stack_size));
+			reloc_start = ntohl(old_hdr.reloc_start);
+			printf("    Reloc Start:  0x%x\n",  reloc_start);
+			reloc_count = ntohl(old_hdr.reloc_count);
+			printf("    Reloc Count:  0x%x\n",  reloc_count);
+			printf("    Flags:        0x%x ( ",  ntohl(old_hdr.flags));
+			if (old_flags) {
+				if (old_flags & FLAT_FLAG_RAM)
+					printf("Load-to-Ram ");
+				if (old_flags & FLAT_FLAG_GOTPIC)
+					printf("Has-PIC-GOT ");
+				if (old_flags & FLAT_FLAG_GZIP)
+					printf("Gzip-Compressed ");
+				if (old_flags & FLAT_FLAG_GZDATA)
+					printf("Gzip-Data-Compressed ");
+				if (old_flags & FLAT_FLAG_KTRACE)
+					printf("Kernel-Traced-Load ");
+				if (old_flags & FLAT_FLAG_L1STK)
+					printf("L1-Scratch-Stack ");
+			}
+			printf(")\n");
+
+			if (print_relocs) {
+				uint32_t *relocs = xcalloc(reloc_count, sizeof(uint32_t));
+				uint32_t i;
+				unsigned long r;
+
+				printf("    Relocs:\n");
+				printf("    #\treloc      (  address )\tdata\n");
+
+				if (old_flags & FLAT_FLAG_GZIP)
+					reopen_stream_compressed(&ifp);
+				if (fseek_stream(&ifp, reloc_start, SEEK_SET)) {
+					fprintf(stderr, "Cannot seek to relocs of %s\n", ifile);
+					fclose_stream(&ifp);
+					return;
+				}
+				if (fread_stream(relocs, sizeof(uint32_t), reloc_count, &ifp) == -1) {
+					fprintf(stderr, "Cannot read relocs of %s\n", ifile);
+					fclose_stream(&ifp);
+					return;
+				}
+
+				for (i = 0; i < reloc_count; ++i) {
+					uint32_t raddr, addr;
+					r = ntohl(relocs[i]);
+					raddr = flat_get_relocate_addr(r);
+					printf("    %u\t0x%08lx (0x%08"PRIx32")\t", i, r, raddr);
+					fseek_stream(&ifp, sizeof(old_hdr) + raddr, SEEK_SET);
+					fread_stream(&addr, sizeof(addr), 1, &ifp);
+					printf("%"PRIx32"\n", addr);
+				}
+
+				/* reset file position for below */
+				fseek_stream(&ifp, sizeof(old_hdr), SEEK_SET);
+			}
 		}
 	} else if (print > 1) {
 		static int first = 1;

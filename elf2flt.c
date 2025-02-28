@@ -84,25 +84,6 @@ const char *elf2flt_progname;
 #elif defined(TARGET_riscv64) || defined(TARGET_riscv32)
 #include <elf/riscv.h>
 #elif defined(TARGET_mips)
-// ps1linux:include/asm-mipsnommu/flat.h, zero columns padded
-// where the relocation target field in?
-#define FLAT_RELOC_IN_TEXT       0x00000000
-#define FLAT_RELOC_IN_DATA       0x40000000
-#define FLAT_RELOC_IN_BSS        0x80000000
-// where relocation value(symbol) is relative from?
-#define FLAT_RELOC_REL_TEXT      0x00000000
-#define FLAT_RELOC_REL_DATA      0x10000000
-#define FLAT_RELOC_REL_BSS       0x20000000
-// e.g. a text referencing to a data: F_R_IN_TEXT | F_R_REL_DATA
-// relocation type
-#define FLAT_RELOC_TYPE_32       0x00000000
-#define FLAT_RELOC_TYPE_HI16     0x01000000
-#define FLAT_RELOC_TYPE_LO16     0x02000000
-#define FLAT_RELOC_TYPE_26       0x03000000
-// relocation direction
-//#define FLAT_RELOC_SIGN_POS      0x00000000 // target+=rel_off
-//#define FLAT_RELOC_SIGN_NEG      0x00800000 // target-=rel_off
-#define FLAT_RELOC_OFFSET_MASK   0x7fffff
 #include <elf/mips.h>
 #endif
 
@@ -114,30 +95,7 @@ const char *elf2flt_progname;
 #include "flat.h"     /* Binary flat header description                      */
 #include "compress.h"
 
-// from ps1linux:include/asm-mipsnommu/flat.h, unsigned_long to uint32_t
-// bFLT4's text_start disappearing makes header INCOMPATIBLE!
-// they are NATIVE ENDIAN except flags, in contrast to bFLT4's network endian.
-struct flat2_hdr {
-	char magic[4];
-	unsigned long rev;
-	unsigned long entry_point; /* Offset of program start point from beginning of text segment */
-	unsigned long text_start; /* Offset of first executable instruction with text segment from beginning of file*/
-	unsigned long data_start; /* Offset of data segment from beginning of file*/
-
-	unsigned long data_end; /* Offset of end of data segment from beginning of file*/
-	unsigned long bss_end; /* Offset of end of bss segment from beginning of file*/
-				/* (It is assumed that data_end through bss_end forms the
-				    bss segment.) */
-	unsigned long stack_size; /* Size of stack, in bytes */
-	unsigned long reloc_start; /* Offset of relocation records from beginning of file */
-
-	unsigned long reloc_count; /* Number of relocation records */
-
-	unsigned long flags;
-
-	unsigned long filler[5]; /* Reservered, set to zero */
-};
-#define	OLD_FLAT_VERSION		0x00000002L
+#include "flat2.h"
 
 
 #ifdef TARGET_e1
@@ -1806,6 +1764,12 @@ DIS29_RELOCATION:
 			 *	Create relocation entry (PC relative doesn't need this).
 			 */
 			if (relocation_needed) {
+#ifdef TARGET_mips
+				// in ps1linux bFLT2, relocation offset is expressed in pflags.
+				uint32_t reladdr = q->address;
+#else
+				uint32_t reladdr = section_vma + q->address;
+#endif
 				if (verbose)
 					printf("  RELOC[%d]: offset=0x%"PRIx64" symbol=%s%s "
 						"section=%s size=%d "
@@ -1813,14 +1777,14 @@ DIS29_RELOCATION:
 						flat_reloc_count,
 						(uint64_t) q->address, sym_name, addstr,
 						section_name, sym_reloc_size,
-						sym_addr, (uint64_t) section_vma + q->address);
+						sym_addr, (uint64_t) reladdr);
 
 #ifndef TARGET_bfin
 				flat_relocs = realloc(flat_relocs,
 					(flat_reloc_count + 1) * sizeof(uint32_t));
 #ifndef TARGET_e1
 				flat_relocs[flat_reloc_count] = pflags |
-					(section_vma + q->address);
+					reladdr;
 
 #else
 				switch ((*p)->howto->type) {

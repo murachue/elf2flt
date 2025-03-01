@@ -111,7 +111,7 @@ process_file(const char *ifile, const char *ofile)
 		time_t t;
 		uint32_t reloc_count, reloc_start;
 
-		if (old_hdr.rev <= 2) {
+		if (old_hdr.rev == 2 /* in (host) little endian! */) {
 			struct flat2_hdr hdr2;
 			memcpy(&hdr2, &old_hdr, sizeof(hdr2));
 			// expecting host is little-endian.

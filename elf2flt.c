@@ -2094,6 +2094,11 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("TEXT -> vma=0x%x len=0x%x\n", text_vma, text_len);
 
+  if (revision == 2)
+     // this can be relaxed. just lazyness for MIPS relocation rewriting.
+     if (text_vma != 0)
+       fatal("ERROR: text=0x%x does not start from 0. check linker script", text_vma);
+
   /* Read in all text sections.  */
   for (s = abs_bfd->sections; s != NULL; s = s->next)
     if (s->flags & SEC_CODE)
@@ -2104,6 +2109,7 @@ int main(int argc, char *argv[])
 	fatal("read error section %s", s->name);
       }
 
+  // this can be relaxed? (.bss only can be exists for assembly-from-scratch)
   if (data_len == 0)
     fatal("%s: no .data section", abs_file);
   data = xmalloc(data_len);
@@ -2111,14 +2117,19 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("DATA -> vma=0x%x len=0x%x\n", data_vma, data_len);
 
-  if ((text_vma + text_len) != data_vma) {
-    if ((text_vma + text_len) > data_vma)
-      fatal("ERROR: text=0x%x overlaps data=0x%x ?", text_len, data_vma);
-    if (verbose)
-      printf("WARNING: data=0x%x does not directly follow text=0x%x\n",
-	  		data_vma, text_len);
-    text_len = data_vma - text_vma;
-  }
+  if (revision == 2) {
+     // this can be relaxed. just lazyness for MIPS relocation rewriting.
+     if (data_vma != 0)
+       fatal("ERROR: data=0x%x does not start from 0. check linker script", data_vma);
+  } else // revision == 4
+    if ((text_vma + text_len) != data_vma) {
+      if ((text_vma + text_len) > data_vma)
+	fatal("ERROR: text=0x%x overlaps data=0x%x ?", text_len, data_vma);
+      if (verbose)
+	printf("WARNING: data=0x%x does not directly follow text=0x%x\n",
+			data_vma, text_len);
+      text_len = data_vma - text_vma;
+    }
 
   /* Read in all data sections.  */
   for (s = abs_bfd->sections; s != NULL; s = s->next)
@@ -2130,8 +2141,12 @@ int main(int argc, char *argv[])
 	fatal("read error section %s", s->name);
       }
 
-  if (bss_vma == ~0)
-    bss_vma = data_vma + data_len;
+  if (bss_vma == ~0) {
+    if (revision == 2)
+      bss_vma = 0;
+    else // revision == 4
+      bss_vma = data_vma + data_len;
+  }
 
   /* Put common symbols in bss.  */
   bss_len += add_com_to_bss(symbol_table, number_of_symbols, bss_len);
@@ -2139,15 +2154,20 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("BSS  -> vma=0x%x len=0x%x\n", bss_vma, bss_len);
 
-  if ((data_vma + data_len) != bss_vma) {
-    if ((data_vma + data_len) > bss_vma)
-      fatal("ERROR: text=0x%x + data=0x%x overlaps bss=0x%x ?", text_len,
-	  		data_len, bss_vma);
-    if (verbose)
-      printf("WARNING: bss=0x%x does not directly follow text=0x%x + data=0x%x(0x%x)\n",
-      		bss_vma, text_len, data_len, text_len + data_len);
-    data_len = bss_vma - data_vma;
-  }
+  if (revision == 2) {
+     // this can be relaxed. just lazyness for MIPS relocation rewriting.
+     if (bss_vma != 0)
+       fatal("ERROR: bss=0x%x does not start from 0. check linker script", bss_vma);
+  } else // revision == 4
+    if ((data_vma + data_len) != bss_vma) {
+      if ((data_vma + data_len) > bss_vma)
+	fatal("ERROR: text=0x%x + data=0x%x overlaps bss=0x%x ?", text_len,
+	    		data_len, bss_vma);
+      if (verbose)
+	printf("WARNING: bss=0x%x does not directly follow text=0x%x + data=0x%x(0x%x)\n",
+			bss_vma, text_len, data_len, text_len + data_len);
+      data_len = bss_vma - data_vma;
+    }
 
   reloc = (uint32_t *)
     output_relocs(abs_bfd, symbol_table, number_of_symbols, &reloc_len,

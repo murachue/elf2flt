@@ -36,6 +36,18 @@
      The --disable-emit-relocs configure setting.
 
      By default, all SINGLE_LINK are kept.
+
+   RISCV_GP:
+
+   BFLT2:
+   BFLT4:
+     In bFLT revision 4, relocation expects all sections are (virtually) placed
+     on RAM contiguously, so just one offset (text_start) is added on each
+     relocation at runtime.
+     But in bFLT revision 2, each relocation have a section info, an offset is
+     chosen from sections at runtime.
+
+     By default, BFLT4 lines are kept and BFLT2 lines are removed.
  */
 
 ENTRY (@ENTRY_SYMBOL@)
@@ -51,7 +63,10 @@ PHDRS {
 
 SECTIONS {
 
-	.text 0x0 : {
+BFLT2:	OVERLAY 0x0 : {
+
+BFLT2:	.text {
+BFLT4:	.text 0x0 : {
 		. = . + 4;
 		. = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@_stext = . ;
@@ -92,9 +107,10 @@ W_RODAT:	*(.gnu.linkonce.r*)
 		*(.call_table_text)
 
 		@SYMBOL_PREFIX@_etext = . ;
-	} > flatmem :text
+	} :text
 
-	.data ALIGN(0x20): {
+BFLT2:	.data {
+BFLT4:	.data ALIGN(0x20): {
 		@SYMBOL_PREFIX@_sdata = . ;
 		@SYMBOL_PREFIX@__data_start = . ;
 		@SYMBOL_PREFIX@data_start = . ;
@@ -107,6 +123,7 @@ R_RODAT:	*(.rodata)
 R_RODAT:	*(.rodata1)
 R_RODAT:	*(.rodata.*)
 R_RODAT:	*(.gnu.linkonce.r*)
+
 		*(.data)
 		*(.data1)
 		*(.data.*)
@@ -184,20 +201,13 @@ TOR:		@SYMBOL_PREFIX@__DTOR_END__ = .;
 		KEEP (*(.fini_array))
 		KEEP (*(SORT(.fini_array.*)))
 		PROVIDE (@SYMBOL_PREFIX@__fini_array_end = .);
-	} > flatmem :data
 
-	.note.ABI-tag : { *(.note.ABI-tag) } > flatmem
-	.eh_frame_hdr : { *(.eh_frame_hdr) } > flatmem
-	.eh_frame : { KEEP(*(.eh_frame)) } > flatmem
-	.gcc_except_table : {
-		KEEP(*(.gcc_except_table))
-		KEEP(*(.gcc_except_table.*))
-	} >flatmem
+		. = ALIGN(0x10) ;
+		@SYMBOL_PREFIX@_edata = . ;
+	} :data
 
-	. = ALIGN(0x10) ;
-	@SYMBOL_PREFIX@_edata = . ;
-
-	.bss : {
+BFLT2:	.bss {
+BFLT4:	.bss : {
 		. = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@_sbss = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@__bss_start = . ;
@@ -215,13 +225,24 @@ TOR:		@SYMBOL_PREFIX@__DTOR_END__ = .;
 		@SYMBOL_PREFIX@_ebss = . ;
 		@SYMBOL_PREFIX@_end = . ;
 		@SYMBOL_PREFIX@end = . ;
-	} > flatmem
+	}
+BFLT2:	}
 
 	.stack : {
 		. = ALIGN(0x4);
+		/* in bFLT2, this became junk value... */
 		@SYMBOL_PREFIX@_stack_start = .;
-	} > flatmem
+	}
 
+	/* they should be meld in .rodata? */
+	.eh_frame_hdr : { *(.eh_frame_hdr) }
+	.eh_frame : { KEEP(*(.eh_frame)) }
+	.gcc_except_table : {
+		KEEP(*(.gcc_except_table))
+		KEEP(*(.gcc_except_table.*))
+	}
+
+	.note.ABI-tag : { *(.note.ABI-tag) }
 	/DISCARD/ : { *(.rel*) *(.rela*) }
 	/DISCARD/ : { *(.note.GNU-stack) *(.reginfo) }
 	/* Stabs debugging sections.    */

@@ -299,6 +299,8 @@ static int do_final_link(int revision)
 	append_sed(&sed, "^W_RODAT:", flag_move_data ? "" : NULL);
 	append_sed(&sed, "^SINGLE_LINK:", USE_EMIT_RELOCS ? "" : NULL);
 	append_sed(&sed, "^TOR:", EMIT_CTOR_DTOR ? "" : NULL);
+	append_sed(&sed, "^BFLT2:", revision == 2 ? "" : NULL);
+	append_sed(&sed, "^BFLT4:", revision == 4 ? "" : NULL);
 
 	if (shared_lib_id) {
 		const char *got_offset;

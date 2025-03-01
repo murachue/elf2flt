@@ -363,7 +363,7 @@ output_relocs (
   uint32_t *n_relocs,
   unsigned char *text, int text_len, uint32_t text_vma,
   unsigned char *data, int data_len, uint32_t data_vma,
-  bfd *rel_bfd)
+  bfd *rel_bfd, int revision)
 {
   uint32_t		*flat_relocs;
   asection		*a, *sym_section, *r;
@@ -386,9 +386,9 @@ output_relocs (
 
 #if 0
   printf("%s(%d): output_relocs(abs_bfd=%d,symbols=0x%x,number_of_symbols=%d,"
-	"n_relocs=0x%x,text=0x%x,text_len=%d,data=0x%x,data_len=%d)\n",
+	"n_relocs=0x%x,text=0x%x,text_len=%d,data=0x%x,data_len=%d,rev=%d)\n",
 	__FILE__, __LINE__, abs_bfd, symbols, number_of_symbols, n_relocs,
-	text, text_len, data, data_len);
+	text, text_len, data, data_len, revision);
 #endif
 
   if (0)
@@ -450,6 +450,77 @@ output_relocs (
 		sectionp = data + (a->vma - data_vma);
 	else
 		continue;
+
+#ifdef TARGET_mips
+	// output relocs for GOT if revision 2 (that does not support FLAT_FLAG_GOTPIC.)
+	// if this is a first .data section. (in bFLT, GOT always present in very first of .data.)
+	// this is a hack.
+	// do this before finding corresponding relocation-binary-section,
+	// in case of no-relocation on the .data.
+	// in some arch (RISC-V) there's GOTPLT header, but they never use bFLT2. forget it.
+	// currently only PS1Linux (MIPS) is known, thereby ifdef'ed.
+	if (pic_with_got && revision == 2 && a->vma == data_vma) {
+    const uint32_t sec_size = elf2flt_bfd_section_size(a);
+		const int is_be = bfd_big_endian (abs_bfd);
+
+	  printf(" GOT: %s [%p]: flags=0x%x vma=0x%"PRIx32" size=0x%"PRIx32"\n",
+			a->name, a, a->flags, section_vma, sec_size);
+
+		for (uint32_t reladdr = 0; reladdr < sec_size; reladdr += 4) {
+			unsigned char *p = data + reladdr;
+			uint32_t w;
+			if (is_be)
+				w =
+					(p[0] << 24)
+					+ (p[1] << 16)
+					+ (p[2] << 8)
+					+ p[3];
+			else
+				w =
+					p[0]
+					+ (p[1] << 8)
+					+ (p[2] << 16)
+					+ (p[3] << 24);
+
+			if (w == -1) {
+				// end of GOT
+				break;
+			}
+
+			pflags = FLAT_RELOC_IN_DATA | FLAT_RELOC_REL_TEXT | FLAT_RELOC_TYPE_32;
+
+			// put a reloc
+			if (verbose) {
+				printf("  RELOC[%d]: offset=0x%"PRIx64" symbol=(GOT)+0x%"PRIx32" "
+					"section=.data size=4 "
+					"fixup=0x%x (reloc=0x%"PRIx64")\n",
+					flat_reloc_count,
+					(uint64_t) reladdr, reladdr,
+					w, (uint64_t) reladdr);
+			}
+			flat_relocs = realloc(flat_relocs,
+					(flat_reloc_count + 1) * sizeof(uint32_t));
+			flat_relocs[flat_reloc_count] = pflags |
+				reladdr;
+
+			flat_reloc_count++;
+
+			// update GOT too
+			w -= text_vma;
+			if (is_be) {
+				p[0] = (w >> 24) & 0xff;
+				p[1] = (w >> 16) & 0xff;
+				p[2] = (w >>  8) & 0xff;
+				p[3] =  w        & 0xff;
+			} else {
+				p[0] =  w        & 0xff;
+				p[1] = (w >>  8) & 0xff;
+				p[2] = (w >> 16) & 0xff;
+				p[3] = (w >> 24) & 0xff;
+			}
+		}
+	}
+#endif
 
 	/* Now search for the equivalent section in the relocation binary
 	 * and use that relocation information to build reloc entries
@@ -921,32 +992,48 @@ output_relocs (
 					// already completely resolved in absolute text, no need to runtime relocation.
 					continue;
 				case R_MIPS_LO16:
-					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
-					bad_relocs++;
-					// HI16+LO16 should be relocated, but
-					// lw(GOT16)+LO16 should NOT be relocated. (already completely resolved.)
-					if (p != relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
+					if (revision == 2) {
+						printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+						bad_relocs++;
 						continue;
-					// else, FALLTHROUGH
+					} else {
+						// HI16+LO16 should be relocated, but
+						// lw(GOT16)+LO16 should NOT be relocated. (already completely resolved.)
+						if (p == relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
+							continue;
+						goto good_32bit_resolved_reloc;
+					}
 				case R_MIPS_26:
-					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
-					bad_relocs++;
-					continue;
+					if (revision == 2) {
+						printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+						bad_relocs++;
+						continue;
+					} else {
+						goto good_32bit_resolved_reloc;
+					}
 				case R_MIPS_HI16:
-					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
-					bad_relocs++;
-					continue;
-					// above are 32bits in thinking with a instruction. pflags is already set. FALLTHROUGH
+					if (revision == 2) {
+						printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+						bad_relocs++;
+						continue;
+					} else {
+						goto good_32bit_resolved_reloc;
+					}
+					// above are 32bits in thinking with a instruction. pflags is already set.
 				case R_MIPS_32:
-					relocation_needed = 1;
-					update_text = 1;
-					if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_TEXT)
-						sym_addr = cur_word - text_vma;
-					else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_DATA)
-						sym_addr = cur_word - data_vma;
-					else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_BSS)
-						sym_addr = cur_word - data_vma - data_len;
-					break;
+					if (revision == 2) {
+						relocation_needed = 1;
+						update_text = 1;
+						if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_TEXT)
+							sym_addr = cur_word - text_vma;
+						else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_DATA)
+							sym_addr = cur_word - data_vma;
+						else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_BSS)
+							sym_addr = cur_word - data_vma - data_len;
+						break;
+					} else {
+						goto good_32bit_resolved_reloc;
+					}
 				default:
 					goto bad_resolved_reloc;
 #else
@@ -1779,14 +1866,29 @@ DIS29_RELOCATION:
 #endif
 
 				default:
-					/* The alignment of the build host
-					   might be stricter than that of the
-					   target, so be careful.  We store in
-					   network byte order. */
-					r_mem[0] = (sym_addr >> 24) & 0xff;
-					r_mem[1] = (sym_addr >> 16) & 0xff;
-					r_mem[2] = (sym_addr >>  8) & 0xff;
-					r_mem[3] =  sym_addr        & 0xff;
+					if (revision == 4) {
+						/* The alignment of the build host
+						   might be stricter than that of the
+						   target, so be careful.  We store in
+						   network byte order. */
+						r_mem[0] = (sym_addr >> 24) & 0xff;
+						r_mem[1] = (sym_addr >> 16) & 0xff;
+						r_mem[2] = (sym_addr >>  8) & 0xff;
+						r_mem[3] =  sym_addr        & 0xff;
+					} else {
+						// write in target endian
+						if (bfd_big_endian (abs_bfd)) {
+							r_mem[0] = (sym_addr >> 24) & 0xff;
+							r_mem[1] = (sym_addr >> 16) & 0xff;
+							r_mem[2] = (sym_addr >>  8) & 0xff;
+							r_mem[3] =  sym_addr        & 0xff;
+						} else {
+							r_mem[0] =  sym_addr        & 0xff;
+							r_mem[1] = (sym_addr >>  8) & 0xff;
+							r_mem[2] = (sym_addr >> 16) & 0xff;
+							r_mem[3] = (sym_addr >> 24) & 0xff;
+						}
+					}
 				}
 #endif /* !TARGET_arm */
 			}
@@ -2184,7 +2286,7 @@ int main(int argc, char *argv[])
 
   reloc = (uint32_t *)
     output_relocs(abs_bfd, symbol_table, number_of_symbols, &reloc_len,
-		  text, text_len, text_vma, data, data_len, data_vma, rel_bfd);
+		  text, text_len, text_vma, data, data_len, data_vma, rel_bfd, revision);
 
   if (reloc == NULL && verbose)
     printf("No relocations in code!\n");

@@ -492,6 +492,9 @@ output_relocs (
 			int relocation_needed = 0;
 			/* Do we need to update the text segment? By default yes if not pic_with_got */
 			int update_text = !pic_with_got;
+#ifdef TARGET_mips
+			uint32_t cur_word;
+#endif
 
 #ifdef TARGET_v850
 			/* Skip this relocation entirely if possible (we
@@ -582,6 +585,20 @@ output_relocs (
 					continue;
 				}
 			}
+
+			// also pre-load cur_word for make life easier
+			if (bfd_big_endian (abs_bfd))
+				cur_word =
+					(r_mem[0] << 24)
+					+ (r_mem[1] << 16)
+					+ (r_mem[2] << 8)
+					+ r_mem[3];
+			else
+				cur_word =
+					r_mem[0]
+					+ (r_mem[1] << 8)
+					+ (r_mem[2] << 16)
+					+ (r_mem[3] << 24);
 #endif
 
 			if (use_resolved) {
@@ -904,16 +921,32 @@ output_relocs (
 					// already completely resolved in absolute text, no need to runtime relocation.
 					continue;
 				case R_MIPS_LO16:
+					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+					bad_relocs++;
 					// HI16+LO16 should be relocated, but
 					// lw(GOT16)+LO16 should NOT be relocated. (already completely resolved.)
 					if (p != relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
 						continue;
 					// else, FALLTHROUGH
 				case R_MIPS_26:
+					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+					bad_relocs++;
+					continue;
 				case R_MIPS_HI16:
+					printf("ERROR: reloc type %s unsupported yet\n", q->howto->name);
+					bad_relocs++;
+					continue;
 					// above are 32bits in thinking with a instruction. pflags is already set. FALLTHROUGH
 				case R_MIPS_32:
-					goto good_32bit_resolved_reloc;
+					relocation_needed = 1;
+					update_text = 1;
+					if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_TEXT)
+						sym_addr = cur_word - text_vma;
+					else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_DATA)
+						sym_addr = cur_word - data_vma;
+					else if ((pflags & FLAT_RELOC_REL_MASK) == FLAT_RELOC_REL_BSS)
+						sym_addr = cur_word - data_vma - data_len;
+					break;
 				default:
 					goto bad_resolved_reloc;
 #else
@@ -987,7 +1020,7 @@ output_relocs (
 				}
 #endif
 
-#ifdef TARGET_MIPS
+#ifdef TARGET_mips
 				// preload cur_word as current word. in MIPS, addend is encoded in binary (not reloc), this make life easier.
 				if (bfd_big_endian (abs_bfd))
 					cur_word =
@@ -2092,11 +2125,6 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("TEXT -> vma=0x%x len=0x%x\n", text_vma, text_len);
 
-  if (revision == 2)
-     // this can be relaxed. just lazyness for MIPS relocation rewriting.
-     if (text_vma != 0)
-       fatal("ERROR: text=0x%x does not start from 0. check linker script", text_vma);
-
   /* Read in all text sections.  */
   for (s = abs_bfd->sections; s != NULL; s = s->next)
     if (s->flags & SEC_CODE)
@@ -2115,19 +2143,14 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("DATA -> vma=0x%x len=0x%x\n", data_vma, data_len);
 
-  if (revision == 2) {
-     // this can be relaxed. just lazyness for MIPS relocation rewriting.
-     if (data_vma != 0)
-       fatal("ERROR: data=0x%x does not start from 0. check linker script", data_vma);
-  } else // revision == 4
-    if ((text_vma + text_len) != data_vma) {
-      if ((text_vma + text_len) > data_vma)
-	fatal("ERROR: text=0x%x overlaps data=0x%x ?", text_len, data_vma);
-      if (verbose)
-	printf("WARNING: data=0x%x does not directly follow text=0x%x\n",
-			data_vma, text_len);
-      text_len = data_vma - text_vma;
-    }
+  if ((text_vma + text_len) != data_vma) {
+    if ((text_vma + text_len) > data_vma)
+      fatal("ERROR: text=0x%x overlaps data=0x%x ?", text_len, data_vma);
+    if (verbose)
+      printf("WARNING: data=0x%x does not directly follow text=0x%x\n",
+		data_vma, text_len);
+    text_len = data_vma - text_vma;
+  }
 
   /* Read in all data sections.  */
   for (s = abs_bfd->sections; s != NULL; s = s->next)
@@ -2140,10 +2163,7 @@ int main(int argc, char *argv[])
       }
 
   if (bss_vma == ~0) {
-    if (revision == 2)
-      bss_vma = 0;
-    else // revision == 4
-      bss_vma = data_vma + data_len;
+    bss_vma = data_vma + data_len;
   }
 
   /* Put common symbols in bss.  */
@@ -2152,20 +2172,15 @@ int main(int argc, char *argv[])
   if (verbose)
     printf("BSS  -> vma=0x%x len=0x%x\n", bss_vma, bss_len);
 
-  if (revision == 2) {
-     // this can be relaxed. just lazyness for MIPS relocation rewriting.
-     if (bss_vma != 0)
-       fatal("ERROR: bss=0x%x does not start from 0. check linker script", bss_vma);
-  } else // revision == 4
-    if ((data_vma + data_len) != bss_vma) {
-      if ((data_vma + data_len) > bss_vma)
-	fatal("ERROR: text=0x%x + data=0x%x overlaps bss=0x%x ?", text_len,
+  if ((data_vma + data_len) != bss_vma) {
+    if ((data_vma + data_len) > bss_vma)
+      fatal("ERROR: text=0x%x + data=0x%x overlaps bss=0x%x ?", text_len,
 	    		data_len, bss_vma);
-      if (verbose)
-	printf("WARNING: bss=0x%x does not directly follow text=0x%x + data=0x%x(0x%x)\n",
+    if (verbose)
+      printf("WARNING: bss=0x%x does not directly follow text=0x%x + data=0x%x(0x%x)\n",
 			bss_vma, text_len, data_len, text_len + data_len);
-      data_len = bss_vma - data_vma;
-    }
+    data_len = bss_vma - data_vma;
+  }
 
   reloc = (uint32_t *)
     output_relocs(abs_bfd, symbol_table, number_of_symbols, &reloc_len,

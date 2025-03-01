@@ -38,16 +38,6 @@
      By default, all SINGLE_LINK are kept.
 
    RISCV_GP:
-
-   BFLT2:
-   BFLT4:
-     In bFLT revision 4, relocation expects all sections are (virtually) placed
-     on RAM contiguously, so just one offset (text_start) is added on each
-     relocation at runtime.
-     But in bFLT revision 2, each relocation have a section info, an offset is
-     chosen from sections at runtime.
-
-     By default, BFLT4 lines are kept and BFLT2 lines are removed.
  */
 
 ENTRY (@ENTRY_SYMBOL@)
@@ -63,10 +53,7 @@ PHDRS {
 
 SECTIONS {
 
-BFLT2:	OVERLAY 0x0 : {
-
-BFLT2:	.text {
-BFLT4:	.text 0x0 : {
+	.text 0x0 : {
 		. = . + 4;
 		. = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@_stext = . ;
@@ -107,19 +94,27 @@ W_RODAT:	*(.gnu.linkonce.r*)
 		*(.call_table_text)
 
 		@SYMBOL_PREFIX@_etext = . ;
+	} > flatmem :text
 
-		/* placing _gp in .text is very HACK. data.vma=0 for easy relocating prohibits correct linear addressing... */
-		_gp = ALIGN(16) + 0x7ff0; /* for MIPS, but unused symbol is acceptable on other archs. end-user should never use symbol name start with underscore. */
-	} :text
-
-BFLT2:	.data {
-BFLT4:	.data ALIGN(0x20): {
+	.data ALIGN(0x20): {
 		@SYMBOL_PREFIX@_sdata = . ;
 		@SYMBOL_PREFIX@__data_start = . ;
 		@SYMBOL_PREFIX@data_start = . ;
 		FILL(0) ;
+		. = ALIGN(0x20) ;
+		LONG(-1)
+		. = ALIGN(0x20) ;
+RISCV_GP:	__global_pointer$ = . + 0x800 ;
+R_RODAT:	*(.rodata)
+R_RODAT:	*(.rodata1)
+R_RODAT:	*(.rodata.*)
+R_RODAT:	*(.gnu.linkonce.r*)
+		*(.data)
+		*(.data1)
+		*(.data.*)
+		*(.gnu.linkonce.d*)
 
-		/* placing them on very top of .data is linked with _gp problem... */
+		_gp = ALIGN(16) + 0x7ff0; /* for MIPS, but unused symbol is acceptable on other archs. end-user should never use symbol name start with underscore. */
 		*(.got.plt)
 		*(.got)
 		/* Microblaze has .sdata and .sbss (small bss).  They must
@@ -129,20 +124,6 @@ BFLT4:	.data ALIGN(0x20): {
 		*(.sdata.*)
 		*(.sbss)			/* Don't move this! */
 		*(.gnu.linkonce.sb*)
-
-		. = ALIGN(0x20) ;
-		LONG(-1)
-		. = ALIGN(0x20) ;
-RISCV_GP:	__global_pointer$ = . + 0x800 ;
-R_RODAT:	*(.rodata)
-R_RODAT:	*(.rodata1)
-R_RODAT:	*(.rodata.*)
-R_RODAT:	*(.gnu.linkonce.r*)
-
-		*(.data)
-		*(.data1)
-		*(.data.*)
-		*(.gnu.linkonce.d*)
 		@SYMBOL_PREFIX@_essrw = . ;
 
 		@SYMBOL_PREFIX@_ssrw_size = @SYMBOL_PREFIX@_essrw - @SYMBOL_PREFIX@_ssrw;
@@ -205,13 +186,21 @@ TOR:		@SYMBOL_PREFIX@__DTOR_END__ = .;
 		KEEP (*(.fini_array))
 		KEEP (*(SORT(.fini_array.*)))
 		PROVIDE (@SYMBOL_PREFIX@__fini_array_end = .);
+	} > flatmem :data
 
-		. = ALIGN(0x10) ;
-		@SYMBOL_PREFIX@_edata = . ;
-	} :data
+	/* they should be meld in .rodata? */
+	.note.ABI-tag : { *(.note.ABI-tag) } > flatmem
+	.eh_frame_hdr : { *(.eh_frame_hdr) } > flatmem
+	.eh_frame : { KEEP(*(.eh_frame)) } > flatmem
+	.gcc_except_table : {
+		KEEP(*(.gcc_except_table))
+		KEEP(*(.gcc_except_table.*))
+	} >flatmem
 
-BFLT2:	.bss {
-BFLT4:	.bss : {
+	. = ALIGN(0x10) ;
+	@SYMBOL_PREFIX@_edata = . ;
+
+	.bss : {
 		. = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@_sbss = ALIGN(0x4) ;
 		@SYMBOL_PREFIX@__bss_start = . ;
@@ -229,24 +218,13 @@ BFLT4:	.bss : {
 		@SYMBOL_PREFIX@_ebss = . ;
 		@SYMBOL_PREFIX@_end = . ;
 		@SYMBOL_PREFIX@end = . ;
-	}
-BFLT2:	}
+	} > flatmem
 
 	.stack : {
 		. = ALIGN(0x4);
-		/* in bFLT2, this became junk value... */
 		@SYMBOL_PREFIX@_stack_start = .;
-	}
+	} > flatmem
 
-	/* they should be meld in .rodata? */
-	.eh_frame_hdr : { *(.eh_frame_hdr) }
-	.eh_frame : { KEEP(*(.eh_frame)) }
-	.gcc_except_table : {
-		KEEP(*(.gcc_except_table))
-		KEEP(*(.gcc_except_table.*))
-	}
-
-	.note.ABI-tag : { *(.note.ABI-tag) }
 	/DISCARD/ : { *(.rel*) *(.rela*) }
 	/DISCARD/ : { *(.note.GNU-stack) *(.reginfo) }
 	/* Stabs debugging sections.    */

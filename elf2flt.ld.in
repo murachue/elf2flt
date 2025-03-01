@@ -107,6 +107,9 @@ W_RODAT:	*(.gnu.linkonce.r*)
 		*(.call_table_text)
 
 		@SYMBOL_PREFIX@_etext = . ;
+
+		/* placing _gp in .text is very HACK. data.vma=0 for easy relocating prohibits correct linear addressing... */
+		_gp = ALIGN(16) + 0x7ff0; /* for MIPS, but unused symbol is acceptable on other archs. end-user should never use symbol name start with underscore. */
 	} :text
 
 BFLT2:	.data {
@@ -115,6 +118,18 @@ BFLT4:	.data ALIGN(0x20): {
 		@SYMBOL_PREFIX@__data_start = . ;
 		@SYMBOL_PREFIX@data_start = . ;
 		FILL(0) ;
+
+		/* placing them on very top of .data is linked with _gp problem... */
+		*(.got.plt)
+		*(.got)
+		/* Microblaze has .sdata and .sbss (small bss).  They must
+		   be contiguous, so please don't move any of this. JW */
+		@SYMBOL_PREFIX@_ssrw = . ;
+		*(.sdata)
+		*(.sdata.*)
+		*(.sbss)			/* Don't move this! */
+		*(.gnu.linkonce.sb*)
+
 		. = ALIGN(0x20) ;
 		LONG(-1)
 		. = ALIGN(0x20) ;
@@ -128,17 +143,6 @@ R_RODAT:	*(.gnu.linkonce.r*)
 		*(.data1)
 		*(.data.*)
 		*(.gnu.linkonce.d*)
-
-		_gp = ALIGN(16) + 0x7ff0; /* for MIPS, but unused symbol is acceptable on other archs. end-user should never use symbol name start with underscore. */
-		*(.got.plt)
-		*(.got)
-		/* Microblaze has .sdata and .sbss (small bss).  They must
-		   be contiguous, so please don't move any of this. JW */
-		@SYMBOL_PREFIX@_ssrw = . ;
-		*(.sdata)
-		*(.sdata.*)
-		*(.sbss)			/* Don't move this! */
-		*(.gnu.linkonce.sb*)
 		@SYMBOL_PREFIX@_essrw = . ;
 
 		@SYMBOL_PREFIX@_ssrw_size = @SYMBOL_PREFIX@_essrw - @SYMBOL_PREFIX@_ssrw;

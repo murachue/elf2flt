@@ -268,6 +268,7 @@ process_file(const char *ifile, const char *ofile)
 			printf("-----------------------------------------------------------\n");
 			first = 0;
 		}
+		// TODO support bFLT2
 		*tmpbuf = '\0';
 		strcat(tmpbuf, (old_flags & FLAT_FLAG_KTRACE) ? "k" : "");
 		strcat(tmpbuf, (old_flags & FLAT_FLAG_RAM) ? "r" : "");

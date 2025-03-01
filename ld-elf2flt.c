@@ -281,7 +281,7 @@ static int do_final_link(int revision)
 						if (!ptr)
 							break;
 						if (streqn(ptr, "RELOC")) {
-							// .rodata can contain relocs to .text/.rodata itself though?
+							// .text can be in ROM, move .rodata into .text with relocs is non-sense.
 							flag_move_data = 0;
 							fprintf(stderr, "warning: .rodata section contains relocations");
 							break;

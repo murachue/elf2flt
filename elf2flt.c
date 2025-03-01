@@ -558,9 +558,6 @@ output_relocs (
 #ifdef TARGET_mips
 			// pre-set pflags here
 			{
-				// note: *q->sym_ptr_ptr is validated to non-NULL.
-				struct bfd_symbol *qs = *q->sym_ptr_ptr; // relocation target symbol
-
 				if (a->flags & SEC_CODE)
 					pflags = FLAT_RELOC_IN_TEXT;
 				else if (a->flags & SEC_DATA)
@@ -568,19 +565,19 @@ output_relocs (
 				else if (a->flags & SEC_ALLOC)
 					pflags = FLAT_RELOC_IN_BSS; // really exists?
 				else {
-					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation entry in the unexpected section\n", r->name, q->address, qs->name);
+					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation entry in the unexpected section\n", r->name, q->address, sym_name);
 					bad_relocs++;
 					continue;
 				}
 				// sym_ptr->section is always non-NULL. (bfd.h)
-				if (qs->section->flags & SEC_CODE)
+				if (sym_section->flags & SEC_CODE)
 					pflags |= FLAT_RELOC_REL_TEXT;
-				else if (qs->section->flags & SEC_DATA)
-					pflags = FLAT_RELOC_REL_DATA;
-				else if (qs->section->flags & SEC_ALLOC)
-					pflags = FLAT_RELOC_REL_BSS;
+				else if (sym_section->flags & SEC_DATA)
+					pflags |= FLAT_RELOC_REL_DATA;
+				else if (sym_section->flags & SEC_ALLOC)
+					pflags |= FLAT_RELOC_REL_BSS;
 				else {
-					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation target in the unexpected section\n", r->name, q->address, qs->name);
+					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation target in the unexpected section\n", r->name, q->address, sym_name);
 					bad_relocs++;
 					continue;
 				}
@@ -956,7 +953,7 @@ output_relocs (
 				}
 			} else {
 				/* Calculate the sym address ourselves.  */
-#if defined(TARGET_xtensa)
+#if defined(TARGET_xtensa) || defined(TARGET_mips)
 				/* For xtensa, calculation of addresses won't
 				   work this way. binutils "ld -r" generate
 				   different relocation types, among others
@@ -970,6 +967,7 @@ output_relocs (
 				   patched to work with "-a" option solely,
 				   which will take output of "ld -q".
 				*/
+				// for MIPS, we could make it, but difficult. just support -a for now.
 				fatal("ERROR: cannot run without '-a'");
 #endif
 				sym_reloc_size = bfd_get_reloc_size(q->howto);

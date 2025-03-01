@@ -565,7 +565,7 @@ output_relocs (
 					pflags = FLAT_RELOC_IN_TEXT;
 				else if (a->flags & SEC_DATA)
 					pflags = FLAT_RELOC_IN_DATA;
-				else if ((a->flags & SEC_ALLOC) && !(a->flags & SEC_CODE) && !(a->flags & SEC_DATA) && !(a->flags & SEC_HAS_CONTENTS))
+				else if (a->flags & SEC_ALLOC)
 					pflags = FLAT_RELOC_IN_BSS; // really exists?
 				else {
 					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation entry in the unexpected section\n", r->name, q->address, qs->name);
@@ -577,7 +577,7 @@ output_relocs (
 					pflags |= FLAT_RELOC_REL_TEXT;
 				else if (qs->section->flags & SEC_DATA)
 					pflags = FLAT_RELOC_REL_DATA;
-				else if ((qs->section->flags & SEC_ALLOC) && !(qs->section->flags & SEC_CODE) && !(qs->section->flags & SEC_DATA) && !(qs->section->flags & SEC_HAS_CONTENTS))
+				else if (qs->section->flags & SEC_ALLOC)
 					pflags = FLAT_RELOC_REL_BSS;
 				else {
 					printf ("ERROR: %s+0x%"PRIx64"(%s): relocation target in the unexpected section\n", r->name, q->address, qs->name);

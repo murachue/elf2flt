@@ -463,8 +463,9 @@ output_relocs (
     const uint32_t sec_size = elf2flt_bfd_section_size(a);
 		const int is_be = bfd_big_endian (abs_bfd);
 
-	  printf(" GOT: %s [%p]: flags=0x%x vma=0x%"PRIx32" size=0x%"PRIx32"\n",
-			a->name, a, a->flags, section_vma, sec_size);
+		if (verbose)
+			printf(" GOT: %s [%p]: flags=0x%x vma=0x%"PRIx32" size=0x%"PRIx32"\n",
+				a->name, a, a->flags, section_vma, sec_size);
 
 		for (uint32_t reladdr = 0; reladdr < sec_size; reladdr += 4) {
 			unsigned char *p = data + reladdr;

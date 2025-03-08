@@ -1015,7 +1015,7 @@ output_relocs (
 					} else {
 						// HI16+LO16 should be relocated, but
 						// lw(GOT16)+LO16 should NOT be relocated. (already completely resolved.)
-						if (p == relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
+						if (p != relpp/*not first*/ && (*(p - 1))->howto->type != R_MIPS_HI16)
 							continue;
 						goto good_32bit_resolved_reloc;
 					}

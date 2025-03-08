@@ -1727,7 +1727,7 @@ DIS29_RELOCATION:
 					relocation_needed = 1;
 					pflags |= FLAT_RELOC_TYPE_32;
 					sym_vma = elf2flt_bfd_section_vma(sym_section) - base_address;
-					sym_addr += cur_word; // cur_word is an addend
+					sym_addr = sym_vma + sym_addr + cur_word; // cur_word is an addend
 					break;
 
 				// unsupported (yet) in this elf2flt, and in bFLT2/4 for some reloc types maybe.
@@ -1755,9 +1755,11 @@ DIS29_RELOCATION:
 			}
 
 			// get addend by subtracting absolute symval (= section_base + symval)
+			// in bFLT2, it's already section-relative, don't subtract vma again.
 			// XXX: address size is bfd-dependent, but we assume it's 32bit, as FLAT (reloc) only supports 32bit.
+			// FIXME: this only consider full 32bit relocation, do also consider partial reloc (H8_DIR24R8, MIPS_HI16 etc)
 			sprintf(&addstr[0], "+0x%"PRIx32, sym_addr - (uint32_t)(*(q->sym_ptr_ptr))->value -
-					 (uint32_t)elf2flt_bfd_section_vma(sym_section));
+					 (uint32_t)elf2flt_bfd_section_vma(sym_section) * (revision == 4));
 
 
 			/*

@@ -190,6 +190,10 @@ static int docompress = 0;
    GNU ld will give you a fully resolved output file with relocation
    entries).  */
 static int use_resolved = 0;
+// the base address of target program, non-zero is used to detect
+// undefined weak symbol nullptr in GOT which must NOT be relocated,
+// only required for MIPS... (distinct with GOT16+LO16)
+static unsigned int base_address = 0;
 
 /* Set if the text section contains any relocations.  If it does, we must
    set the load_to_ram flag.  */
@@ -462,7 +466,6 @@ output_relocs (
 	if (pic_with_got && revision == 2 && a->vma == data_vma) {
     const uint32_t sec_size = elf2flt_bfd_section_size(a);
 		const int is_be = bfd_big_endian (abs_bfd);
-		int zerofound = 0;
 
 		if (verbose)
 			printf(" GOT: %s [%p]: flags=0x%x vma=0x%"PRIx32" size=0x%"PRIx32"\n",
@@ -491,16 +494,16 @@ output_relocs (
 			}
 
 			if (w == 0) {
-				// some weak symbol is allowed to be zero,
-				// and __uClibc_start_main depends on it!?
-				// don't output reloc to null entry.
-				// .text+0 is reserved by our ldscript, so valid entries never be zero.
-				// XXX but! GOT16+LO16's zero entry must be relocated to .text!!
-				//     super heuristic: it seems first zero entry is its entry, no skip reloc only for that.
-				if (!zerofound)
-					zerofound = 1;
-				else
-					continue;
+				// nullptr that is an undefined weak symbol, don't relocate.
+				// (or it's really points to 0, but should be avoided by base_address.)
+				if (verbose) {
+					printf("  UNDWEAK: offset=0x%"PRIx64" symbol=(GOT)+0x%"PRIx32" "
+						"section=.data size=4 "
+						"fixup=0x%x (reloc=0x%"PRIx64")\n",
+						(uint64_t) reladdr, reladdr,
+						w, (uint64_t) reladdr);
+				}
+				continue;
 			}
 
 			pflags = FLAT_RELOC_IN_DATA | FLAT_RELOC_REL_TEXT | FLAT_RELOC_TYPE_32;
@@ -1706,8 +1709,9 @@ DIS29_RELOCATION:
 				case R_MIPS_26:
 					relocation_needed = 1;
 					pflags |= FLAT_RELOC_TYPE_26;
-					sym_vma = elf2flt_bfd_section_vma(sym_section);
-					sym_addr = (sym_addr & 0xfc000000) | ((sym_addr + (sym_vma >> 2)) & 0x03ffFFFF);
+					sym_vma = elf2flt_bfd_section_vma(sym_section) - base_address;
+					// cur_word is an addend. abusing the property of addend on lowbits.
+					sym_addr = (cur_word & 0xfc000000) | ((((sym_vma + sym_addr) >> 2) + cur_word) & 0x03ffFFFF);
 					break;
 				// TODO: special treat HI/LO pair... how GOT16+LO16?
 				//case R_MIPS_HI16:
@@ -1722,8 +1726,8 @@ DIS29_RELOCATION:
 				case R_MIPS_32:
 					relocation_needed = 1;
 					pflags |= FLAT_RELOC_TYPE_32;
-					sym_vma = elf2flt_bfd_section_vma(sym_section);
-					// use sym_addr as is.
+					sym_vma = elf2flt_bfd_section_vma(sym_section) - base_address;
+					sym_addr += cur_word; // cur_word is an addend
 					break;
 
 				// unsupported (yet) in this elf2flt, and in bFLT2/4 for some reloc types maybe.
@@ -1750,6 +1754,7 @@ DIS29_RELOCATION:
 				}
 			}
 
+			// get addend by subtracting absolute symval (= section_base + symval)
 			// XXX: address size is bfd-dependent, but we assume it's 32bit, as FLAT (reloc) only supports 32bit.
 			sprintf(&addstr[0], "+0x%"PRIx32, sym_addr - (uint32_t)(*(q->sym_ptr_ptr))->value -
 					 (uint32_t)elf2flt_bfd_section_vma(sym_section));
@@ -1915,6 +1920,7 @@ DIS29_RELOCATION:
 			if (relocation_needed) {
 #ifdef TARGET_mips
 				// in ps1linux bFLT2, relocation offset is expressed in pflags.
+				// dunno it's required from MIPS or bFLT2...
 				uint32_t reladdr = q->address;
 #else
 				uint32_t reladdr = section_vma + q->address;
@@ -2001,6 +2007,7 @@ static void usage(int status)
 		"                         instead of recalculating from\n"
 		"                         relocation info\n"
 		"       -2              : generate old revision 2 bFLT format\n"
+		"       -b base-address : program base address in hex (default 0)\n"
 		"       -R reloc-file   : read relocations from a separate file\n"
 		"       -p abs-pic-file : GOT/PIC processing with files\n"
 		"       -s stacksize    : set application stack size\n"
@@ -2111,7 +2118,7 @@ int main(int argc, char *argv[])
   stack = 0x2020;
 #endif
 
-  while ((opt = getopt(argc, argv, "havzdrkp:s:o:R:2")) != -1) {
+  while ((opt = getopt(argc, argv, "havzdrkp:s:o:R:2b:")) != -1) {
     switch (opt) {
     case 'v':
       verbose++;
@@ -2148,6 +2155,12 @@ int main(int argc, char *argv[])
       break;
     case '2':
       revision = 2;
+      break;
+    case 'b':
+      if (sscanf(optarg, "%x", &base_address) != 1) {
+        fprintf(stderr, "%s invalid base address %s\n", argv[0], optarg);
+        usage(1);
+      }
       break;
     case 'h':
       usage(0);

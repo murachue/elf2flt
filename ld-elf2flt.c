@@ -241,6 +241,44 @@ do_sed(const sed_commands_t *sed, const char *name_in, const char *name_out)
 		int status = execute(__VA_ARGS__); \
 		if (status) return status; \
 	} while (0)
+
+static int make_flt_input(void)
+{
+	if (USE_EMIT_RELOCS) {
+		// just output_gdb is a final ELF binary with relocation.
+		exec_or_ret(linker, NULL, &other_options,
+			"-T", linker_script, "-q", "-o", output_gdb, emulation);
+	} else if (NO_GOT_CHECK) {
+		if (!output_elf)
+			output_elf = make_temp_file(NULL);
+
+		// we need an ELF with relocation (but not resolved in binary) and with COMMON defined...
+		exec_or_ret(linker, NULL, &other_options,
+			"-T", linker_script, "-Ur", "-d", "-o", output_elf, emulation);
+		// ...and an absolute (relocation resolved) ELF binary (but no reloc).
+		exec_or_ret(linker, NULL, &other_options,
+			"-T", linker_script, "-o", output_gdb, emulation);
+	} else {
+		// prelink an ELF with COMMON defined to get fixed for both following reloc/abs??...
+		if (!output_flt)
+			output_flt = make_temp_file(NULL);
+		exec_or_ret(linker, NULL, &other_options,
+			"-r", "-d", "-o", output_flt, emulation);
+
+		// we need an ELF with relocation (but not resolved in binary)...
+		if (!output_elf)
+			output_elf = make_temp_file(NULL);
+		exec_or_ret(linker, NULL, &search_dirs,
+			"-T", linker_script, "-Ur", "-o", output_elf, output_flt, emulation);
+
+		// ...and an absolute (relocation resolved) ELF binary (but no reloc) using pre-linked.
+		exec_or_ret(linker, NULL, &search_dirs,
+			"-T", linker_script, "-o", output_gdb, output_flt, emulation);
+	}
+
+	return 0;
+}
+
 static int do_final_link(int revision)
 {
 	sed_commands_t sed;
@@ -354,45 +392,19 @@ static int do_final_link(int revision)
 		do_sed(&sed, linker_script, tmp_file);
 		linker_script = tmp_file;
 	}
-	free_sed(&sed);
 
 	if (revision == 2)
 		append_option(&flt_options, "-2");
 
+	make_flt_input();
+
 	if (USE_EMIT_RELOCS) {
-
-		exec_or_ret(linker, NULL, &other_options,
-			"-T", linker_script, "-q", "-o", output_gdb, emulation);
-
 		append_option(&flt_options, "-a");
 		rel_output = output_gdb;
-
 	} else if (NO_GOT_CHECK) {
-
-		output_elf = make_temp_file(NULL);
-
-		exec_or_ret(linker, NULL, &other_options,
-			"-T", linker_script, "-Ur", "-d", "-o", output_elf, emulation);
-		exec_or_ret(linker, NULL, &other_options,
-			"-T", linker_script, "-o", output_gdb, emulation);
-
 		rel_output = output_elf;
-
 	} else {
-
-		output_flt = make_temp_file(NULL);
-		exec_or_ret(linker, NULL, &other_options,
-			"-r", "-d", "-o", output_flt, emulation);
-
-		output_elf = make_temp_file(NULL);
-		exec_or_ret(linker, NULL, &search_dirs,
-			"-T", linker_script, "-Ur", "-o", output_elf, output_flt, emulation);
-
-		exec_or_ret(linker, NULL, &search_dirs,
-			"-T", linker_script, "-o", output_gdb, output_flt, emulation);
-
 		rel_output = output_elf;
-
 	}
 
 	if (shared_lib_id && strtol(shared_lib_id, NULL, 0) != 0)
@@ -408,6 +420,27 @@ static int do_final_link(int revision)
 		}
 	}
 	fclose(in);
+
+	if (have_got) {
+		const unsigned int base = 0x10000000;
+		char buf[10];
+
+		sprintf(buf, "%X", base);
+		append_sed(&sed, "ORIGIN = 0x0,", concat("ORIGIN = 0x", buf, ",", NULL));
+		append_sed(&sed, ".text 0x0 :", concat(".text 0x", buf, " :", NULL));
+		if (script) {
+			do_sed(&sed, script, tmp_file); // tmp_file is an already once sed'ed script.
+			//linker_script = tmp_file;
+
+			make_flt_input();
+
+			append_option(&flt_options, "-b");
+			append_option(&flt_options, buf);
+		}
+	}
+
+	free_sed(&sed);
+
 	if (have_got)
 		exec_or_ret(elf2flt, NULL, &flt_options,
 			"-o", output_file, "-p", output_gdb, rel_output);

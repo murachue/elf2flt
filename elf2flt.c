@@ -2320,7 +2320,7 @@ int main(int argc, char *argv[])
   if (reloc == NULL && verbose)
     printf("No relocations in code!\n");
 
-  text_offs = real_address_bits(text_vma);
+  text_offs = real_address_bits(text_vma - base_address);
 
   /* Fill in the binflt_flat header */
   if (revision == 4) {

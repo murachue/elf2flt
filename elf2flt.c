@@ -2328,7 +2328,7 @@ int main(int argc, char *argv[])
   if (revision == 4) {
     memcpy(hdr4.magic,"bFLT",4);
     hdr4.rev         = htonl(FLAT_VERSION);
-    hdr4.entry       = htonl(sizeof(hdr4) + bfd_get_start_address(abs_bfd));
+    hdr4.entry       = htonl(sizeof(hdr4) + bfd_get_start_address(abs_bfd) - base_address);
     hdr4.data_start  = htonl(sizeof(hdr4) + text_offs + text_len);
     hdr4.data_end    = htonl(sizeof(hdr4) + text_offs + text_len +data_len);
     hdr4.bss_end     = htonl(sizeof(hdr4) + text_offs + text_len +data_len+bss_len);
@@ -2348,7 +2348,7 @@ int main(int argc, char *argv[])
     memcpy(hdr2.magic,"bFLT",4);
     hdr2.rev         =      (OLD_FLAT_VERSION);
     // in ps1linux bFLT2, entry is relative from text_start!
-    hdr2.entry_point =                      bfd_get_start_address(abs_bfd);
+    hdr2.entry_point =                      bfd_get_start_address(abs_bfd) - text_vma;
     hdr2.text_start  =      (sizeof(hdr2) + text_offs);
     hdr2.data_start  =      (sizeof(hdr2) + text_offs + text_len);
     hdr2.data_end    =      (sizeof(hdr2) + text_offs + text_len +data_len);

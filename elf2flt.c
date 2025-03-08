@@ -462,12 +462,14 @@ output_relocs (
 	if (pic_with_got && revision == 2 && a->vma == data_vma) {
     const uint32_t sec_size = elf2flt_bfd_section_size(a);
 		const int is_be = bfd_big_endian (abs_bfd);
+		int zerofound = 0;
 
 		if (verbose)
 			printf(" GOT: %s [%p]: flags=0x%x vma=0x%"PRIx32" size=0x%"PRIx32"\n",
 				a->name, a, a->flags, section_vma, sec_size);
 
-		for (uint32_t reladdr = 0; reladdr < sec_size; reladdr += 4) {
+		// first two GOT entry seems reserved, no relocation.
+		for (uint32_t reladdr = 8; reladdr < sec_size; reladdr += 4) {
 			unsigned char *p = data + reladdr;
 			uint32_t w;
 			if (is_be)
@@ -486,6 +488,19 @@ output_relocs (
 			if (w == -1) {
 				// end of GOT
 				break;
+			}
+
+			if (w == 0) {
+				// some weak symbol is allowed to be zero,
+				// and __uClibc_start_main depends on it!?
+				// don't output reloc to null entry.
+				// .text+0 is reserved by our ldscript, so valid entries never be zero.
+				// XXX but! GOT16+LO16's zero entry must be relocated to .text!!
+				//     super heuristic: it seems first zero entry is its entry, no skip reloc only for that.
+				if (!zerofound)
+					zerofound = 1;
+				else
+					continue;
 			}
 
 			pflags = FLAT_RELOC_IN_DATA | FLAT_RELOC_REL_TEXT | FLAT_RELOC_TYPE_32;

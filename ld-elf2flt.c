@@ -30,7 +30,7 @@
 const char *elf2flt_progname;
 
 static int flag_verbose = 0, flag_final = 1, have_elf2flt_options = 0,
-	flag_move_data = 0, want_shared = 0;
+	flag_move_data = 0, want_shared = 0, o_map = 0;
 static const char *shared_lib_id = NULL;
 static const char *output_file = "a.out";
 static const char *linker_script = NULL;
@@ -396,6 +396,14 @@ static int do_final_link(int revision)
 	if (revision == 2)
 		append_option(&flt_options, "-2");
 
+	if (o_map) {
+		append_option(&other_options, "-Map");
+		append_option(&other_options, concat(output_file, ".map", NULL));
+		// ugly!!
+		append_option(&search_dirs, "-Map");
+		append_option(&search_dirs, concat(output_file, ".map", NULL));
+	}
+
 	make_flt_input();
 
 	if (USE_EMIT_RELOCS) {
@@ -512,6 +520,8 @@ static void parse_args(int argc, char **argv)
 			append_option(&other_options, arg);
 		} else if (streqn(arg, "-m")) {
 			emulation = arg[2] ? arg : concat("-m", argv[++argno], NULL);
+		} else if (streq(arg, "--oMap")) {
+			o_map = 1;
 		} else
 			append_option(&other_options, arg);
 
